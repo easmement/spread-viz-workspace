@@ -7,6 +7,7 @@
             [jotis.viz.account.interface :as acct]
             [jotis.viz.order-manager.interface :as orders]
             [jotis.viz.trade-store.interface :as store]
+            [jotis.viz.sim-pricer.interface :as sim]
             [cheshire.core :as json]))
 
 (def ^:private port 3001)
@@ -269,13 +270,149 @@
         (store/cancel-trade! trade-id)
         (ok {:cancelled (str trade-id)})))))
 
+;; ---- Sim routes ----
+
+(defroutes sim-routes
+  (POST "/api/sim/generate" req
+    (guarded
+      (let [{:keys [ticker start end]} (get req :json-body)
+            result (sim/generate-ticker! ticker start end)]
+        (ok result))))
+
+  (GET "/api/sim/tickers" []
+    (guarded (ok {:tickers (sim/available-tickers)})))
+
+  (GET "/api/sim/dates/:ticker" [ticker]
+    (guarded (ok {:dates (sim/available-dates ticker)})))
+
+  (GET "/api/sim/expiries/:ticker" [ticker date]
+    (guarded (ok {:expiries (sim/available-expiries ticker date)})))
+
+  (GET "/api/sim/chain/:ticker" [ticker date expiry]
+    (guarded (ok {:chain (vec (sim/option-chain ticker date expiry))})))
+
+  (POST "/api/sim/orders/vertical" req
+    (guarded
+      (let [b         (get req :json-body)
+            otype     (str (:option-type b))
+            sim-date  (str (:sim-date b))
+            ticker    (str/upper-case (:ticker b))
+            expiry    (str (:expiry b))
+            ss        (double (:short-strike b))
+            ls        (double (:long-strike b))
+            qty       (long   (:qty b))
+            short-px  (:bid (sim/contract-mid ticker sim-date expiry ss otype))
+            long-px   (:ask (sim/contract-mid ticker sim-date expiry ls otype))
+            net-credit (- (or short-px 0.0) (or long-px 0.0))
+            id        (sim/record-sim-trade!
+                        {:ticker          ticker
+                         :instrument-type :vertical-spread
+                         :option-type     (keyword otype)
+                         :qty             qty
+                         :open-value      net-credit
+                         :sim-open-date   sim-date
+                         :legs [{:symbol      (str ticker "-" otype "-" ss "-short")
+                                 :option-type (keyword otype)
+                                 :side        :short :ratio-qty 1
+                                 :strike      ss :expiry expiry :open-price (or short-px 0.0)}
+                                {:symbol      (str ticker "-" otype "-" ls "-long")
+                                 :option-type (keyword otype)
+                                 :side        :long  :ratio-qty 1
+                                 :strike      ls :expiry expiry :open-price (or long-px 0.0)}]})]
+        (ok {:trade-id (str id) :net-credit net-credit}))))
+
+  (POST "/api/sim/orders/butterfly" req
+    (guarded
+      (let [b        (get req :json-body)
+            otype    (str (:option-type b))
+            sim-date (str (:sim-date b))
+            ticker   (str/upper-case (:ticker b))
+            expiry   (str (:expiry b))
+            ls       (double (:lower-strike b))
+            ms       (double (:middle-strike b))
+            us       (double (:upper-strike b))
+            qty      (long (:qty b))
+            dir      (str (or (:direction b) "long"))
+            mk-px    (fn [side strike]
+                       (let [px (sim/contract-mid ticker sim-date expiry strike otype)]
+                         (if (= "long" side) (:ask px) (:bid px))))
+            lo-px  (mk-px dir ls)
+            mid-px (mk-px (if (= "long" dir) "short" "long") ms)
+            up-px  (mk-px dir us)
+            net    (if (= "long" dir)
+                     (- (* 2 (or mid-px 0.0)) (or lo-px 0.0) (or up-px 0.0))
+                     (- (or lo-px 0.0) (* 2 (or mid-px 0.0)) (+ (or up-px 0.0))))
+            id     (sim/record-sim-trade!
+                     {:ticker          ticker
+                      :instrument-type :butterfly
+                      :option-type     (keyword otype)
+                      :qty             qty
+                      :open-value      net
+                      :sim-open-date   sim-date
+                      :legs [{:symbol (str ticker "-" otype "-" ls) :option-type (keyword otype)
+                               :side (keyword dir) :ratio-qty 1 :strike ls :expiry expiry :open-price (or lo-px 0.0)}
+                              {:symbol (str ticker "-" otype "-" ms "-1") :option-type (keyword otype)
+                               :side (keyword (if (= "long" dir) "short" "long")) :ratio-qty 1 :strike ms :expiry expiry :open-price (or mid-px 0.0)}
+                              {:symbol (str ticker "-" otype "-" ms "-2") :option-type (keyword otype)
+                               :side (keyword (if (= "long" dir) "short" "long")) :ratio-qty 1 :strike ms :expiry expiry :open-price (or mid-px 0.0)}
+                              {:symbol (str ticker "-" otype "-" us) :option-type (keyword otype)
+                               :side (keyword dir) :ratio-qty 1 :strike us :expiry expiry :open-price (or up-px 0.0)}]})]
+        (ok {:trade-id (str id) :net net}))))
+
+  (POST "/api/sim/orders/back-ratio" req
+    (guarded
+      (let [b        (get req :json-body)
+            otype    (str (:option-type b))
+            sim-date (str (:sim-date b))
+            ticker   (str/upper-case (:ticker b))
+            expiry   (str (:expiry b))
+            ss       (double (:short-strike b))
+            ls       (double (:long-strike b))
+            qty      (long (:qty b))
+            short-px (:bid (sim/contract-mid ticker sim-date expiry ss otype))
+            long-px  (:ask (sim/contract-mid ticker sim-date expiry ls otype))
+            net      (- (or short-px 0.0) (* 2.0 (or long-px 0.0)))
+            id       (sim/record-sim-trade!
+                       {:ticker          ticker
+                        :instrument-type :back-ratio
+                        :option-type     (keyword otype)
+                        :qty             qty
+                        :open-value      net
+                        :sim-open-date   sim-date
+                        :legs [{:symbol (str ticker "-" otype "-" ss "-short") :option-type (keyword otype)
+                                 :side :short :ratio-qty 1 :strike ss :expiry expiry :open-price (or short-px 0.0)}
+                                {:symbol (str ticker "-" otype "-" ls "-long-1") :option-type (keyword otype)
+                                 :side :long :ratio-qty 1 :strike ls :expiry expiry :open-price (or long-px 0.0)}
+                                {:symbol (str ticker "-" otype "-" ls "-long-2") :option-type (keyword otype)
+                                 :side :long :ratio-qty 1 :strike ls :expiry expiry :open-price (or long-px 0.0)}]})]
+        (ok {:trade-id (str id) :net net}))))
+
+  (GET "/api/sim/trades" []
+    (guarded (ok {:trades (sim/all-sim-trades)})))
+
+  (POST "/api/sim/trades/:trade-id/close" req
+    (guarded
+      (let [trade-id (java.util.UUID/fromString (get-in req [:route-params :trade-id]))
+            sim-date (get (get req :json-body) :sim-date)
+            pnl      (sim/close-sim-trade! trade-id sim-date)]
+        (ok {:pnl pnl}))))
+
+  (GET "/api/sim/trades/:trade-id/pnl" req
+    (guarded
+      (let [trade-id (java.util.UUID/fromString (get-in req [:route-params :trade-id]))
+            sim-date (get-in req [:params "date"])
+            trade    (first (filter #(= trade-id (:trade/id %)) (sim/all-sim-trades)))
+            pnl      (when trade (sim/sim-trade-pnl-at trade sim-date))]
+        (ok {:pnl pnl})))))
+
 ;; ---- App ----
 
 (defroutes all-routes
   market-routes
   account-routes
   order-routes
-  trade-routes)
+  trade-routes
+  sim-routes)
 
 (def app
   (-> all-routes
@@ -286,6 +423,7 @@
 
 (defn start! []
   (store/init!)
+  (sim/init!)
   (when @server (@server :timeout 100))
   (reset! server (srv/run-server app {:port port}))
   (println (str "API server on http://localhost:" port)))

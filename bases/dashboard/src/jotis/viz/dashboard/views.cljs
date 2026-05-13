@@ -2,7 +2,8 @@
   (:require [reagent.core :as r]
             [clojure.string :as str]
             ["plotly.js-dist-min" :as Plotly]
-            [jotis.viz.dashboard.trading-views :as tv]))
+            [jotis.viz.dashboard.trading-views :as tv]
+            [jotis.viz.dashboard.sim-views :as sv]))
 
 ;; ---- Styles ----
 
@@ -226,7 +227,8 @@
   [[:viz       "P&L Visualizer"]
    [:trade     "Trade"]
    [:positions "Positions"]
-   [:history   "History"]])
+   [:history   "History"]
+   [:sim       "Simulator"]])
 
 (defn- tab-bar [current-tab on-change]
   (into [:div {:style {:display "flex" :gap "4px" :margin-bottom "24px"
@@ -283,4 +285,7 @@
            [tv/positions-panel]
 
            :history
-           [tv/history-panel])]))))
+           [tv/history-panel]
+
+           :sim
+           [sv/sim-panel])]))))
