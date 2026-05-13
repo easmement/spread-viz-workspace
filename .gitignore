@@ -1,0 +1,40 @@
+# ── Clojure / Polylith ────────────────────────────────────────────────────────
+# Classpath cache (root and inside individual bases/components)
+.cpcache/
+.nrepl-port
+
+# clojure-lsp: only the generated analysis cache, not project config
+.lsp/
+
+# clj-kondo: track config.edn, hooks/, imports/; ignore generated cache
+**/.clj-kondo/.cache/
+
+# Calva (VS Code Clojure plugin) REPL session files
+.calva/
+**/.calva/
+
+# ── Java / Build output ───────────────────────────────────────────────────────
+target/
+*.class
+*.jar
+
+# IntelliJ / Cursive
+.idea/
+*.iml
+
+# ── ClojureScript / Shadow-CLJS ───────────────────────────────────────────────
+.shadow-cljs/
+node_modules/
+resources/public/js/compiled/
+
+# ── Misc generated / temp ─────────────────────────────────────────────────────
+workspace.debug
+*.bak
+*.log
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+
+# ── Secrets / environment ─────────────────────────────────────────────────────
+.env
+*.env

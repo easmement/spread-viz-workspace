@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "plotly.js-dist-min": "^3.5.0",
+    "react": "^17.0.2",
+    "react-dom": "^17.0.2"
+  },
+  "devDependencies": {
+    "shadow-cljs": "^3.4.6"
+  }
+}

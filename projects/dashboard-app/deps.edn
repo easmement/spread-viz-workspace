@@ -1,0 +1,16 @@
+{:paths []
+ :deps
+ {jotis/dashboard      {:local/root "../../bases/dashboard"}
+  jotis/math-engine    {:local/root "../../components/math-engine"}
+  jotis/market-data    {:local/root "../../components/market-data"}
+  jotis/trading-logic  {:local/root "../../components/trading-logic"}
+  jotis/account        {:local/root "../../components/account"}
+  jotis/order-manager  {:local/root "../../components/order-manager"}
+  jotis/trade-store    {:local/root "../../components/trade-store"}}
+
+ :aliases
+ {:uberjar
+  {:extra-deps {uberdeps/uberdeps {:mvn/version "1.0.1"}}
+   :main-opts  ["-m" "uberdeps.api"
+                "--main"   "jotis.viz.dashboard.server"
+                "--target" "target/dashboard-app.jar"]}}}

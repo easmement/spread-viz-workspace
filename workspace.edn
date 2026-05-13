@@ -1,0 +1,22 @@
+{:topography {:components-root "components"
+              :bases-root "bases"
+              :projects-root "projects"
+              :development-root "development"
+              :interfaces-root "src"}
+              
+ :settings {:primary-branch "main"
+            :vcs :git}
+            
+ :user-input {:component-name-separator "-"
+              :base-name-separator "-"
+              :project-name-separator "-"}
+
+ ;; This section lists the projects you intend to build (artifacts)
+ :projects {"dashboard-app" {:components ["math-engine" 
+                                          "market-data" 
+                                          "trading-logic"
+                                          "account"
+                                          "order-manager"
+                                          "trade-store"]
+                             :bases ["dashboard"]}}}
+

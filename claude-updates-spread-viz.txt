@@ -1,0 +1,302 @@
+File	Bug	Fix
+market-data/src/jotis/market_data/interface.clj	Wrong directory — namespace mismatch	Moved to jotis/viz/market_data/interface.clj
+market-data/.../interface.clj	ALPACA_KEY / ALPACA_SECRET not in env	Changed to APCA_API_KEY_ID / APCA_API_SECRET_KEY
+market-data/.../interface.clj	get-last-quote called a String as a function	Fixed to (str base-data-url "/v2/stocks/" ticker "/quotes/latest")
+math-engine/.../interface.clj	generate-full-data-set forward-referenced price-probability	Moved price-probability above generate-full-data-set
+trading-logic/.../core.clj	Two separate :require forms in ns	Merged into one
+One remaining issue to be aware of: dashboard/core.clj references generate-pnl-matrix and trading-logic/calculate-spread-pnl without requiring them in the ns — that'll be a compile error when you build the ClojureScript bundle. Worth fixing when you start wiring up the frontend.
+
+
+
+files changed:
+
+File	Change
+math-engine/interface.clj → .cljc	Converted to cross-platform — CLJ uses Apache Commons NormalDistribution, CLJS uses a pure Abramowitz & Stegun polynomial approximation of erf() (max error 1.5×10⁻⁷)
+dashboard/core.clj → .cljs	Fixed requires, inlined calculate-spread-pnl (avoids pulling server-only market-data into CLJS bundle), wires generate-heatmap-with-bounds into mount-root
+dashboard/views.clj → .cljs	Defined main-panel, rewrote Plotly component using r/create-class with component-did-mount lifecycle, removed unused math import
+target/public/index.html	Removed CDN Plotly (using npm bundled version)
+shadow-cljs.edn	Changed :deps true → {:deps {:aliases [:dev]}} so shadow-cljs picks up the source paths and thheller/shadow-cljs JAR from the :dev alias
+package.json	Added shadow-cljs, react, react-dom as dev/peer deps
+Open the heatmap:
+
+
+http://localhost:8080/index.html
+The page shows a Bull Put Spread P&L heatmap (Short 180P / Long 175P, IV=35%, $1.50 credit) with the ±1σ expected move cone overlaid as dashed white lines.
+
+
+
+
+The P&L values look correct — max loss of -$3.50 at both strikes at expiry, credit collected above strikes. The math is fine.
+
+The root cause was React 19 (installed by npm by default) removing ReactDOM.render, which Reagent 1.2.0 relies on. Downgrading to React 17 and rebuilding fixed it.
+
+Hard refresh the page now: http://localhost:8080/index.html
+
+Use Ctrl+Shift+R (or Cmd+Shift+R on Mac) to bypass the cache — the old main.js bundle was built against React 19 and may still be cached.
+
+If you want the server to auto-restart on future reboots, note that npx shadow-cljs watch app is running as PID 748093 and will keep rebuilding on file saves. Hot reload is also wired up via :after-load jotis.viz.dashboard.core/mount-root in shadow-cljs.edn.
+
+
+============
+
+It's there — 1 occurrence of "SPY", and ticker/spread_params are both in the bundle. The build is correct. The watch server already delivered the updated main.js.
+
+Hard-refresh the page (Ctrl+Shift+R) at http://localhost:8080/index.html. You should now see:
+
+Plotly chart title: SPY · Bull Put Spread P&L · Price × Days to Expiration
+Page subtitle: SPY · Bull Put Spread · Short 180P / Long 175P · IV 35% · $1.50 credit
+To change the ticker later, just update :ticker in spread-params in core.cljs — the subtitle and chart title both derive from it automatically.
+
+
+
+Yes — the EM is in the chart. The values are all within the $155–$205 price range and the cone is geometrically correct:
+
+Day 0 (expiry, top of chart with reversed y-axis): both lines meet at spot = $180
+Day 30 (today, bottom of chart): lower = $161.94, upper = $198.06
+The cone narrows to a point at expiry and fans out toward the current date — which is the standard options visualization.
+
+What you should see on the chart:
+
+Two white dashed lines (rgba(255,255,255,0.8)) labeled +1σ and -1σ in the legend
+Forming a funnel shape — wide at the bottom (day 30), converging to a point at $180 at the top (day 0)
+The heatmap P&L values beneath it show how the spread profits when price stays inside the cone
+If the lines aren't visible, it's most likely a contrast issue — white dashes can be hard to see over the red/blue heatmap. We could make them thicker, change the color (yellow is popular for sigma lines), or add markers at key points. Want me to make them more prominent?
+
+
+-----------------------
+
+All in the bundle. Hard-refresh (Ctrl+Shift+R) at http://localhost:8080/index.html.
+
+Here's what changed:
+
+Form (8 fields, 2 rows):
+
+Ticker	Spread Type	Spot Price	IV %
+Short Strike	Long Strike	Net Credit/Debit	Expiration Date
+Behaviour:
+
+Expiration Date drives the DTE calculation — the y-axis and chart title both show Exp: YYYY-MM-DD (N DTE) live
+Spread Type toggles between Put Spread and Call Spread, updating leg types automatically
+The price range auto-scales to ±2.5σ around spot so the chart always fits the expected move cone regardless of what ticker/price you enter
+Nothing recomputes until you click Update Chart, so partial edits don't trigger expensive recalculations
+
+
+
+-----------
+
+
+Thanks! This is shaping up to be a solid tool. The core loop is working — live Alpaca data, Black-Scholes grid, interactive form, and the EM cone all in one place.
+
+A few natural next steps when you're ready:
+
+Live spot price — wire the ticker field to pull from Alpaca on Update (needs a small CLJ server endpoint since the API keys can't be in the browser bundle)
+Live IV — pull from the Alpaca options snapshot for a chosen contract
+More spread types — iron condors, butterflies (the legs structure already supports N legs)
+Let me know what you want to tackle next.
+
+
+===============================================
+
+Good picture of the project. Here's the plan:
+
+Add get-atm-iv to market-data (Alpaca options snapshot → find strike nearest spot → return its IV)
+New server.clj in the dashboard base — compojure + http-kit, two endpoints: /api/quote/:ticker and /api/iv/:ticker?expiry=&spot=&type=
+Add a :server alias to deps.edn for running it
+Add "Fetch Live" button to views.cljs that populates Spot and IV
+Let me write it all now.
+
+What was added:
+
+market-data/interface.clj — new get-atm-iv [ticker expiry spot option-type]
+
+Calls GET /v1beta1/options/snapshots/:ticker?expiration_date=...&type=put|call&feed=opra&limit=100, then picks the contract whose strike is closest to spot and returns its implied_volatility.
+
+bases/dashboard/src/jotis/viz/dashboard/server.clj — new Ring + http-kit API server on port 3001
+
+GET /api/quote/:ticker → {"price": 547.23}
+GET /api/iv/:ticker?expiry=2026-05-29&spot=547&type=put → {"iv": 0.2318}
+CORS headers so the browser (port 8080) can call it freely
+views.cljs — new Fetch Live button (teal, left of Update Chart)
+
+Calls both endpoints in parallel, populates Spot and IV% fields. Shows a red error message if the server is unreachable or Alpaca returns an error.
+
+deps.edn — new :server alias
+
+development/src/dev/user.clj — REPL helpers start/stop/restart
+
+To run it — open a second terminal:
+
+
+# Terminal 1 (already running)
+npx shadow-cljs watch app
+
+# Terminal 2 — start the API server
+clj -M:server
+Then in the browser, enter a ticker + expiry + spread type and hit Fetch Live to pull the current ask price and ATM IV straight from Alpaca.
+
+-------------
+
+
+New Polylith components:
+
+Component	What it does
+components/account/	get-account, get-positions, get-orders via Alpaca paper API
+components/order-manager/	place-vertical-spread, place-diagonal, place-single-option, place-stock-order, cancel-order + occ-symbol builder
+components/trade-store/	Datomic Peer 1.0.7556 schema (trade + leg entities), record-trade!, close-trade!, all-trades, open-trades, performance-summary
+Server (server.clj) — expanded to 5 route groups: market data, account, 4 order types (each auto-records to Datomic on success), trade history + performance, cancel.
+
+Frontend — two new tabs:
+
+Trade — instrument selector + form per type (vertical/diagonal/single option/stock), account equity banner, green submit button with loading/error feedback
+History — performance summary row (total trades, win rate, total P&L) + sortable trade table
+To run:
+
+
+# Terminal 1 — frontend (already running)
+npx shadow-cljs watch app
+
+# Terminal 2 — API server (start fresh with new components)
+clj -M:server
+The trade store uses datomic:mem://trades by default (in-memory, resets on server restart). Set DATOMIC_URI=datomic:dev://localhost:4334/trades to persist via H2 if you run the Datomic transactor.
+
+Connected cleanly to the transactor. The database trades is live at datomic:dev://localhost:4334/trades, schema is installed (:next-t 1003 reflects the schema transaction), and performance-summary returns the correct empty state.
+
+You're ready to run. In a terminal that has DATOMIC_URI sourced:
+
+
+clj -M:server
+Output you should see:
+
+
+Trade store connected: datomic:dev://localhost:4334/trades
+API server on http://localhost:3001
+All trade data recorded through the Trade tab will be persisted to the Datomic database and survive server restarts. The History tab's P&L summary queries live Datomic on each load.
+
+
+
+The new code is in the bundle. The shadow-cljs watch had already compiled it when I saved the file — the "0 compiled" output just meant the compile command found nothing new to do.
+
+What was wrong: tab-bar received the active-tab atom as a prop, then dereferenced it inside a lazy for. Reagent only tracks atom derefs that happen eagerly during a component's render execution — the lazy sequence from for can be realized outside that tracking window, so Reagent never knew tab-bar needed to re-render.
+
+Fix: tab-bar now takes current-tab (the plain keyword value, e.g. :viz) and an on-change callback. The parent passes @active-tab and a reset fn. Since Reagent sees a changed keyword prop on click, it always re-renders tab-bar with the new active value, and mapv replaces for to eliminate the laziness issue entirely.
+
+
+------------------
+
+
+Clean build, 0 warnings. Here's what was added:
+
+order-manager — two new functions:
+
+place-butterfly — 3-leg MLEG order, ratio_qty: 2 on the body strike. Long = buy wings/sell body (debit); Short = sell wings/buy body (credit). Works identically for symmetric or broken-wing — just set the strikes at the widths you want.
+place-iron-condor — 4-leg MLEG order. Short IC (credit): sell put spread + sell call spread. Long IC (debit): buy put spread + buy call spread. Strike order enforced in the form hint: Put Buy < Put Sell < spot < Call Sell < Call Buy.
+Server — /api/orders/butterfly and /api/orders/iron-condor, both recording all legs to Datomic (3 legs for butterfly, 4 for IC).
+
+Trade tab — two new entries in the instrument selector. Each form shows a one-line description that updates based on Long/Short direction so it's clear which strikes are bought vs sold before submitting.
+
+
+Thank you! This has been a solid build session. Here's what the workspace looks like now:
+
+Polylith components
+
+math-engine — Black-Scholes, heatmap generation, expected move
+market-data — Alpaca spot price, ATM IV, option snapshots
+account — equity, positions, orders
+order-manager — OCC symbol builder, all 7 instrument types
+trade-store — Datomic schema, record/close/query trades
+trading-logic — spread aggregator
+API server (port 3001)
+
+Market data, account, 7 order endpoints, trade history + performance summary
+Browser (port 8080)
+
+P&L Visualizer tab — interactive heatmap with ±1σ expected move, live Fetch button
+Trade tab — vertical, diagonal, butterfly (sym/BWB), iron condor (4 legs), single option, stock
+History tab — performance summary + full trade log from Datomic
+
+A natural next step when you're ready: wire the History tab's open trades to a Close Trade button that hits /api/trades/:id/close and records the realized P&L back to Datomic. Want me to /schedule that for a future session?
+
+
+------------
+
+ow let me verify the fix is correct by reading the end of the file:
+
+Read trading_views.cljs (lines 464-498)
+The closing sequence on line 496 is now )]])]])})))). Let me trace it against the open forms:
+
+char	closes
+)	(for [t ...]
+]	[:tbody
+]	[:table
+)	(if (empty? @trades)
+]	[:div {:style s-card}
+]	[:div (outer render div)
+)	(fn [] — reagent-render fn
+}	{ — r/create-class map
+)	(r/create-class
+)	(letfn [...]
+)	(let [...]
+)	(defn history-panel []
+That's 12 closings, correctly ordered. The bracket error at line 496 is fixed — the fn now closes before the map }.
+
+---
+
+
+is the update complete now:  wire the History tab's open trades to a Close Trade button that hits /api/trades/:id/close and records the realized P&L back to Datomic
+Let me verify all the pieces are in place end-to-end.
+
+Read interface.clj
+All four layers are confirmed complete:
+
+Backend (Datomic + server)
+
+close-trade! in trade-store/interface.clj:60-75 — looks up the trade, computes pnl = (open-value - close-value) * qty * 100, transacts :closed status, :trade/closed-at, :trade/close-value, and :trade/pnl back to Datomic
+POST /api/trades/:trade-id/close in server.clj:209-214 — parses UUID, calls store/close-trade!, returns {:pnl ...}
+Frontend
+
+trade-row in trading_views.cljs:377-445 — shows "Close" button on open trades; clicking it reveals an inline input + "Confirm" + "✕"; Confirm fires on-close with the entered value
+history-panel in trading_views.cljs:447-496 — fetches trades and performance on mount; on-close POSTs to /api/trades/:id/close, clears the closing state, and refreshes both lists; bracket error is now fixed
+The feature is complete. The only caveat (noted in close-trade!'s docstring) is that P&L uses a 100× multiplier — correct for options contracts but will over-report for stock trades. If you want to fix that, close-trade! could branch on :trade/instrument-type before multiplying.
+
+fix the problem of over-report for stock trades
+Edit interface.clj
+Added 4 lines
+
+
+
+
+Let me verify all the pieces are in place end-to-end.
+
+Read interface.clj
+All four layers are confirmed complete:
+
+Backend (Datomic + server)
+
+close-trade! in trade-store/interface.clj:60-75 — looks up the trade, computes pnl = (open-value - close-value) * qty * 100, transacts :closed status, :trade/closed-at, :trade/close-value, and :trade/pnl back to Datomic
+POST /api/trades/:trade-id/close in server.clj:209-214 — parses UUID, calls store/close-trade!, returns {:pnl ...}
+Frontend
+
+trade-row in trading_views.cljs:377-445 — shows "Close" button on open trades; clicking it reveals an inline input + "Confirm" + "✕"; Confirm fires on-close with the entered value
+history-panel in trading_views.cljs:447-496 — fetches trades and performance on mount; on-close POSTs to /api/trades/:id/close, clears the closing state, and refreshes both lists; bracket error is now fixed
+The feature is complete. The only caveat (noted in close-trade!'s docstring) is that P&L uses a 100× multiplier — correct for options contracts but will over-report for stock trades. If you want to fix that, close-trade! could branch on :trade/instrument-type before multiplying.
+
+
+Two things changed:
+
+Single d/pull for all three needed attrs instead of two separate pulls — avoids reading a stale db snapshot between calls.
+P&L formula branches on instrument type:
+Stock: (close - open) * qty — profit when price rises (long position assumed)
+Options: (open - close) * qty * 100 — profit when premium decays (short/credit position convention)
+The stock formula assumes a long position. If you later add short stock support, close-trade! would need to also check :trade/side (or the leg's :leg/side) and flip the sign for short stock trades.
+
+
+
+
+
+
+
+
+
+
+
+
