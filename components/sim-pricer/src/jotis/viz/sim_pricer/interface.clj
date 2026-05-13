@@ -249,8 +249,9 @@
       ;; Batch insert in 500-row chunks
       (let [all-rows (vec rows)]
         (jdbc/with-transaction [tx @ds]
-          (doseq [chunk (partition-all 500 all-rows)]
-            (jdbc/execute-batch! tx option-price-upsert-sql chunk {})))
+          (with-open [ps (jdbc/prepare tx [option-price-upsert-sql])]
+            (doseq [chunk (partition-all 500 all-rows)]
+              (jdbc/execute-batch! ps chunk {}))))
         {:rows-inserted (count all-rows)
          :dates         (count dates)}))))
 

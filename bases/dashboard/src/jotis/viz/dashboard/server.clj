@@ -3,6 +3,7 @@
             [compojure.core :refer [GET POST DELETE defroutes]]
             [ring.middleware.params :refer [wrap-params]]
             [ring.middleware.json :refer [wrap-json-body]]
+            [clojure.string :as str]
             [jotis.viz.market-data.interface :as market]
             [jotis.viz.account.interface :as acct]
             [jotis.viz.order-manager.interface :as orders]
@@ -61,7 +62,7 @@
 (defroutes order-routes
   (POST "/api/orders/stock" req
     (guarded
-      (let [b     (get req :json-body)
+      (let [b     (:body req)
             order (orders/place-stock-order b)
             id    (store/record-trade!
                     (assoc b
@@ -75,7 +76,7 @@
 
   (POST "/api/orders/single-option" req
     (guarded
-      (let [b     (get req :json-body)
+      (let [b     (:body req)
             order (orders/place-single-option b)
             id    (store/record-trade!
                     (assoc b
@@ -93,7 +94,7 @@
 
   (POST "/api/orders/vertical" req
     (guarded
-      (let [b           (get req :json-body)
+      (let [b           (:body req)
             opt-type    (keyword (:option-type b))
             order       (orders/place-vertical-spread (assoc b :option-type opt-type))
             short-sym   (orders/occ-symbol (:ticker b) (:expiry b) opt-type (:short-strike b))
@@ -119,7 +120,7 @@
 
   (POST "/api/orders/calendar" req
     (guarded
-      (let [b        (get req :json-body)
+      (let [b        (:body req)
             opt-type (keyword (:option-type b))
             order    (orders/place-calendar (assoc b :option-type opt-type))
             near-sym (orders/occ-symbol (:ticker b) (:near-expiry b) opt-type (:strike b))
@@ -145,7 +146,7 @@
 
   (POST "/api/orders/diagonal" req
     (guarded
-      (let [b        (get req :json-body)
+      (let [b        (:body req)
             opt-type (keyword (:option-type b))
             order    (orders/place-diagonal (assoc b :option-type opt-type))
             near-sym (orders/occ-symbol (:ticker b) (:near-expiry b) opt-type (:near-strike b))
@@ -171,7 +172,7 @@
 
   (POST "/api/orders/butterfly" req
     (guarded
-      (let [b        (get req :json-body)
+      (let [b        (:body req)
             opt-type (keyword (:option-type b))
             dir      (keyword (or (:direction b) "long"))
             order    (orders/place-butterfly (assoc b :option-type opt-type :direction dir))
@@ -195,7 +196,7 @@
 
   (POST "/api/orders/iron-condor" req
     (guarded
-      (let [b     (get req :json-body)
+      (let [b     (:body req)
             dir   (keyword (or (:direction b) "short"))
             order (orders/place-iron-condor (assoc b :direction dir))
             short? (= dir :short)
@@ -218,7 +219,7 @@
 
   (POST "/api/orders/back-ratio" req
     (guarded
-      (let [b        (get req :json-body)
+      (let [b        (:body req)
             opt-type (keyword (:option-type b))
             order    (orders/place-back-ratio (assoc b :option-type opt-type))
             short-sym (orders/occ-symbol (:ticker b) (:expiry b) opt-type (:short-strike b))
@@ -260,7 +261,7 @@
   (POST "/api/trades/:trade-id/close" req
     (guarded
       (let [trade-id   (java.util.UUID/fromString (get-in req [:route-params :trade-id]))
-            close-val  (get (get req :json-body) :close-value)
+            close-val  (get (:body req) :close-value)
             pnl        (store/close-trade! trade-id close-val)]
       (ok {:pnl pnl}))))
 
@@ -275,7 +276,7 @@
 (defroutes sim-routes
   (POST "/api/sim/generate" req
     (guarded
-      (let [{:keys [ticker start end]} (get req :json-body)
+      (let [{:keys [ticker start end]} (:body req)
             result (sim/generate-ticker! ticker start end)]
         (ok result))))
 
@@ -293,7 +294,7 @@
 
   (POST "/api/sim/orders/vertical" req
     (guarded
-      (let [b         (get req :json-body)
+      (let [b         (:body req)
             otype     (str (:option-type b))
             sim-date  (str (:sim-date b))
             ticker    (str/upper-case (:ticker b))
@@ -323,7 +324,7 @@
 
   (POST "/api/sim/orders/butterfly" req
     (guarded
-      (let [b        (get req :json-body)
+      (let [b        (:body req)
             otype    (str (:option-type b))
             sim-date (str (:sim-date b))
             ticker   (str/upper-case (:ticker b))
@@ -361,7 +362,7 @@
 
   (POST "/api/sim/orders/back-ratio" req
     (guarded
-      (let [b        (get req :json-body)
+      (let [b        (:body req)
             otype    (str (:option-type b))
             sim-date (str (:sim-date b))
             ticker   (str/upper-case (:ticker b))
@@ -393,7 +394,7 @@
   (POST "/api/sim/trades/:trade-id/close" req
     (guarded
       (let [trade-id (java.util.UUID/fromString (get-in req [:route-params :trade-id]))
-            sim-date (get (get req :json-body) :sim-date)
+            sim-date (get (:body req) :sim-date)
             pnl      (sim/close-sim-trade! trade-id sim-date)]
         (ok {:pnl pnl}))))
 
@@ -414,10 +415,26 @@
   trade-routes
   sim-routes)
 
+(defn- wrap-cors [handler]
+  (fn [req]
+    (if (= :options (:request-method req))
+      {:status  200
+       :headers {"Access-Control-Allow-Origin"  "*"
+                 "Access-Control-Allow-Methods" "GET, POST, DELETE, OPTIONS"
+                 "Access-Control-Allow-Headers" "Content-Type"
+                 "Access-Control-Max-Age"       "86400"}
+       :body    ""}
+      (let [resp (handler req)]
+        (update resp :headers assoc
+                "Access-Control-Allow-Origin"  "*"
+                "Access-Control-Allow-Methods" "GET, POST, DELETE, OPTIONS"
+                "Access-Control-Allow-Headers" "Content-Type")))))
+
 (def app
   (-> all-routes
       (wrap-json-body {:keywords? true})
-      wrap-params))
+      wrap-params
+      wrap-cors))
 
 (defonce ^:private server (atom nil))
 
