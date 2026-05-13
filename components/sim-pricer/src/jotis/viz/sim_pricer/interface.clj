@@ -304,6 +304,14 @@
        :put-iv     (when put  (double (:iv    put)))
        :put-delta  (when put  (double (:delta put)))})))
 
+(defn underlying-price [ticker price-date]
+  (let [row (jdbc/execute-one! @ds
+              ["SELECT close FROM sim.underlying_prices
+                WHERE ticker = ? AND price_date = ?::date"
+               (str/upper-case ticker) price-date]
+              {:builder-fn rs/as-unqualified-maps})]
+    (when row (double (:close row)))))
+
 (defn contract-mid [ticker price-date expiry strike otype]
   (let [row (jdbc/execute-one! @ds
               ["SELECT mid, bid, ask FROM sim.option_prices

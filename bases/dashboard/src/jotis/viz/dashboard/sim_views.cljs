@@ -167,6 +167,39 @@
                      [:span {:style {:color "white" :font-weight "600"}} ticker]
                      [:span {:style {:color "#64748b" :margin-left "6px"}} (str dates " days")]]))])]))))
 
+;; ---- Sim Context Bar ----
+
+(defn- context-bar [ctx-atom]
+  (let [price      (r/atom nil)
+        last-fetch (atom nil)]
+    (fn []
+      (let [{:keys [ticker date]} @ctx-atom]
+        (when (and (seq ticker) (seq date)
+                   (not= [ticker date] @last-fetch))
+          (reset! last-fetch [ticker date])
+          (js/setTimeout
+            #(get! (str "/api/sim/price/" ticker "?date=" date)
+                   (fn [r] (reset! price (:price r)))
+                   (fn [_] (reset! price nil)))
+            0))
+        [:div {:style (merge s-card {:padding "10px 20px" :margin-bottom "8px"
+                                     :display "flex" :align-items "center"
+                                     :gap "20px" :flex-wrap "wrap"})}
+         [:span {:style {:color "#64748b" :font-size "11px" :font-weight "600"
+                         :letter-spacing "0.08em"}} "SIM DATE"]
+         [:span {:style {:color "white" :font-size "15px" :font-weight "600"}}
+          (if (seq date) date "—")]
+         (when (and (seq ticker) (seq date))
+           [:<>
+            [:span {:style {:color "#334155" :margin "0 4px"}} "·"]
+            [:span {:style {:color "#94a3b8" :font-size "13px" :font-weight "600"
+                            :margin-right "4px"}} ticker]
+            [:span {:style {:color "#64748b" :font-size "11px" :font-weight "600"
+                            :letter-spacing "0.08em"}} "CLOSE"]
+            [:span {:style {:color "#4ade80" :font-size "15px" :font-weight "700"
+                            :margin-left "6px"}}
+             (if @price (str "$" (.toFixed @price 2)) "—")]])]))))
+
 ;; ---- Section 2: Chain Explorer ----
 
 (defn- chain-table [rows on-select-strike]
@@ -254,12 +287,14 @@
                         (reset! dates (:dates r))
                         (when-let [d (last (:dates r))]
                           (swap! form assoc :date d)
+                          (on-chain-context {:ticker ticker :date d :expiry ""})
                           (load-expiries! ticker d then)))
                       #(js/console.warn "dates fetch failed:" %))))
             (set-ticker! [t]
               (swap! form assoc :ticker t :date "" :expiry "")
               (reset! dates [])
               (reset! expiries [])
+              (on-chain-context {:ticker t :date "" :expiry ""})
               (load-dates! t nil))]
       (fn [tickers _]
         ;; Auto-select first available ticker once when tickers load
@@ -282,10 +317,12 @@
                [:select {:value     (:date @form "")
                          :style     (assoc s-input :cursor "pointer")
                          :on-change (fn [e]
-                                      (let [d (.. e -target -value)]
+                                      (let [d (.. e -target -value)
+                                            t (:ticker @form)]
                                         (swap! form assoc :date d :expiry "")
                                         (reset! expiries [])
-                                        (load-expiries! (:ticker @form) d nil)))}
+                                        (on-chain-context {:ticker t :date d :expiry ""})
+                                        (load-expiries! t d nil)))}
                 (for [d @dates] ^{:key d} [:option {:value d} d])]]
               [date-in form :date "Sim Date"])
             (if (seq @expiries)
@@ -541,6 +578,7 @@
     (fn []
       [:div
        [setup-panel (fn [t] (reset! tickers t))]
+       [context-bar chain-ctx]
        [explorer-panel @tickers (fn [ctx] (reset! chain-ctx ctx))]
        [trade-entry-panel chain-ctx (fn [] (swap! trades-refresh inc))]
        ^{:key @trades-refresh}

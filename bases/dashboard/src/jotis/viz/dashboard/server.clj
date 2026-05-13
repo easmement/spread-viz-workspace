@@ -283,6 +283,11 @@
   (GET "/api/sim/tickers" []
     (guarded (ok {:tickers (sim/available-tickers)})))
 
+  (GET "/api/sim/price/:ticker" [ticker date]
+    (guarded
+      (let [price (sim/underlying-price ticker date)]
+        (if price (ok {:price price}) (err (str "No price data for " ticker " on " date) 404)))))
+
   (GET "/api/sim/dates/:ticker" [ticker]
     (guarded (ok {:dates (sim/available-dates ticker)})))
 
