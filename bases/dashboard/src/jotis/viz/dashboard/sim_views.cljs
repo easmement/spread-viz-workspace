@@ -219,30 +219,14 @@
                      :on-click #(on-select-strike (:strike row))}
             "Use"]]])]]]))
 
-(defn- explorer-panel [available-tickers on-chain-context]
-  (let [form     (r/atom {:ticker "" :date "" :expiry ""})
-        dates    (r/atom [])
-        expiries (r/atom [])
-        chain    (r/atom [])
-        loading  (r/atom false)]
-    (letfn [(load-dates! [ticker]
-              (when (seq ticker)
-                (get! (str "/api/sim/dates/" ticker)
-                      (fn [r]
-                        (reset! dates (:dates r))
-                        (when-let [d (last (:dates r))]
-                          (swap! form assoc :date d)
-                          (load-expiries! ticker d)))
-                      #(js/console.warn "dates fetch failed:" %))))
-            (load-expiries! [ticker date]
-              (when (and (seq ticker) (seq date))
-                (get! (str "/api/sim/expiries/" ticker "?date=" date)
-                      (fn [r]
-                        (reset! expiries (:expiries r))
-                        (when-let [e (first (:expiries r))]
-                          (swap! form assoc :expiry e)))
-                      #(js/console.warn "expiries fetch failed:" %))))
-            (load-chain! []
+(defn- explorer-panel [_ on-chain-context]
+  (let [form      (r/atom {:ticker "" :date "" :expiry ""})
+        dates     (r/atom [])
+        expiries  (r/atom [])
+        chain     (r/atom [])
+        loading   (r/atom false)
+        init-done (atom false)]
+    (letfn [(load-chain! []
               (let [{:keys [ticker date expiry]} @form]
                 (when (and (seq ticker) (seq date) (seq expiry))
                   (reset! loading true)
@@ -253,14 +237,45 @@
                           (reset! loading false))
                         (fn [e]
                           (js/console.warn "chain fetch failed:" e)
-                          (reset! loading false))))))]
+                          (reset! loading false))))))
+            (load-expiries! [ticker date then]
+              (when (and (seq ticker) (seq date))
+                (get! (str "/api/sim/expiries/" ticker "?date=" date)
+                      (fn [r]
+                        (reset! expiries (:expiries r))
+                        (when-let [e (first (:expiries r))]
+                          (swap! form assoc :expiry e))
+                        (when then (then)))
+                      #(js/console.warn "expiries fetch failed:" %))))
+            (load-dates! [ticker then]
+              (when (seq ticker)
+                (get! (str "/api/sim/dates/" ticker)
+                      (fn [r]
+                        (reset! dates (:dates r))
+                        (when-let [d (last (:dates r))]
+                          (swap! form assoc :date d)
+                          (load-expiries! ticker d then)))
+                      #(js/console.warn "dates fetch failed:" %))))
+            (set-ticker! [t]
+              (swap! form assoc :ticker t :date "" :expiry "")
+              (reset! dates [])
+              (reset! expiries [])
+              (load-dates! t nil))]
       (fn [tickers _]
+        ;; Auto-select first available ticker once when tickers load
+        (when (and (seq tickers) (empty? (:ticker @form)) (not @init-done))
+          (reset! init-done true)
+          (js/setTimeout #(set-ticker! (:ticker (first tickers))) 0))
         (let [ticker-opts (map (fn [{:keys [ticker]}] [ticker ticker]) tickers)]
           [:div {:style s-card}
            [:h3 {:style s-section-title} "Option Chain Explorer"]
            [grid 4
             (if (seq ticker-opts)
-              [select-in form :ticker "Ticker" ticker-opts]
+              [field "Ticker"
+               [:select {:value     (:ticker @form "")
+                         :style     (assoc s-input :cursor "pointer")
+                         :on-change #(set-ticker! (.. % -target -value))}
+                (for [[v t] ticker-opts] ^{:key v} [:option {:value v} t])]]
               [text-in form :ticker "Ticker" {:upper? true}])
             (if (seq @dates)
               [field "Sim Date"
@@ -268,8 +283,9 @@
                          :style     (assoc s-input :cursor "pointer")
                          :on-change (fn [e]
                                       (let [d (.. e -target -value)]
-                                        (swap! form assoc :date d)
-                                        (load-expiries! (:ticker @form) d)))}
+                                        (swap! form assoc :date d :expiry "")
+                                        (reset! expiries [])
+                                        (load-expiries! (:ticker @form) d nil)))}
                 (for [d @dates] ^{:key d} [:option {:value d} d])]]
               [date-in form :date "Sim Date"])
             (if (seq @expiries)
@@ -282,8 +298,11 @@
            [:div {:style {:margin-top "14px" :display "flex" :gap "10px"}}
             [action-btn "Load Chain" "#0f766e"
              (fn []
-               (load-dates! (:ticker @form))
-               (load-chain!))
+               (let [{:keys [ticker date expiry]} @form]
+                 (cond
+                   (and (seq date) (seq expiry)) (load-chain!)
+                   (seq date)                    (load-expiries! ticker date load-chain!)
+                   :else                         (load-dates! ticker load-chain!))))
              {:loading? @loading}]]
            [:div {:style {:margin-top "16px"}}
             [chain-table @chain (fn [strike]
