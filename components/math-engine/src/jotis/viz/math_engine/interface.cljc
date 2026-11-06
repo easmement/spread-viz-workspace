@@ -48,6 +48,19 @@
         (- (* k (Math/exp (* -1 r t)) (cdf (- d2-v)))
            (* s (cdf (- d1-v))))))))
 
+(defn spread-pnl
+  "P&L per share of a multi-leg option position at underlying price s and time t (years).
+   legs: [{:type :call|:put :strike k :side :long|:short}]
+   initial-cost: net credit received (positive) or debit paid (negative).
+   P&L = current value of the legs (long minus short) + initial-cost."
+  [legs s t r iv initial-cost]
+  (+ initial-cost
+     (reduce (fn [acc {:keys [type strike side]}]
+               (let [price (black-scholes type s strike t r iv)]
+                 (if (= side :long) (+ acc price) (- acc price))))
+             0.0
+             legs)))
+
 (defn generate-pnl-matrix
   "Generates a 2D matrix for Plotly.
    price-range: [min-p max-p step]

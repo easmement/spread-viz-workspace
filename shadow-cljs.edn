@@ -1,11 +1,15 @@
 {:deps {:aliases [:dev]}
 
+ ;; Serves index.html (also for "/") and the compiled JS during development.
+ :dev-http {8080 {:root             "bases/dashboard/resources/public"
+                  :push-state/index "index.html"}}
+
  :builds
- {:app {:target :browser
-        :output-dir "target/public/js"
+ {:app {:target     :browser
+        :output-dir "bases/dashboard/resources/public/js"
         :asset-path "/js"
-        :modules {:main {:init-fn jotis.viz.dashboard.core/init}}
-        
-        :devtools {:after-load jotis.viz.dashboard.core/mount-root
-                   :http-root "target/public"
-                   :http-port 8080}}}}
+        :modules    {:main {:init-fn jotis.viz.dashboard.core/init}}
+        ;; API server address baked into the build; override with SPREAD_VIZ_API.
+        :closure-defines {jotis.viz.dashboard.config/api-base
+                          #shadow/env ["SPREAD_VIZ_API" "http://localhost:3001"]}
+        :devtools   {:after-load jotis.viz.dashboard.core/mount-root}}}}

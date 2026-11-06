@@ -2,6 +2,7 @@
   (:require [reagent.core :as r]
             [clojure.string :as str]
             ["plotly.js-dist-min" :as Plotly]
+            [jotis.viz.dashboard.config :as config]
             [jotis.viz.dashboard.trading-views :as tv]
             [jotis.viz.dashboard.sim-views :as sv]))
 
@@ -80,7 +81,7 @@
 
 ;; ---- Live data fetch ----
 
-(def ^:private api-base "http://localhost:3001")
+(def ^:private api-base config/api-base)
 
 (defn- fetch-live! [form loading err]
   (let [{:keys [ticker expiry spot option-type]} @form]

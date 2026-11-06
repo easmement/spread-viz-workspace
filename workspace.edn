@@ -1,22 +1,10 @@
-{:topography {:components-root "components"
-              :bases-root "bases"
-              :projects-root "projects"
-              :development-root "development"
-              :interfaces-root "src"}
-              
- :settings {:primary-branch "main"
-            :vcs :git}
-            
- :user-input {:component-name-separator "-"
-              :base-name-separator "-"
-              :project-name-separator "-"}
-
- ;; This section lists the projects you intend to build (artifacts)
- :projects {"dashboard-app" {:components ["math-engine" 
-                                          "market-data" 
-                                          "trading-logic"
-                                          "account"
-                                          "order-manager"
-                                          "trade-store"]
-                             :bases ["dashboard"]}}}
-
+;; Polylith workspace configuration. Each project's bricks are listed in its own
+;; projects/<name>/deps.edn; the development project is the root deps.edn (:dev and :test).
+{:top-namespace        "jotis.viz"
+ :interface-ns         "interface"
+ :default-profile-name "default"
+ :compact-views        #{}
+ :vcs                  {:name "git" :auto-add false}
+ :tag-patterns         {:stable "stable-*" :release "v[0-9]*"}
+ :projects             {"development"   {:alias "dev"}
+                        "dashboard-app" {:alias "app"}}}

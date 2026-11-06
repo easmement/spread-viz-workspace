@@ -1,7 +1,8 @@
 (ns jotis.viz.dashboard.sim-views
-  (:require [reagent.core :as r]))
+  (:require [reagent.core :as r]
+            [jotis.viz.dashboard.config :as config]))
 
-(def ^:private api "http://localhost:3001")
+(def ^:private api config/api-base)
 
 ;; ---- Shared styles (mirrors trading-views) ----
 

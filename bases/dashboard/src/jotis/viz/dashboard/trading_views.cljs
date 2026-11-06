@@ -1,7 +1,8 @@
 (ns jotis.viz.dashboard.trading-views
-  (:require [reagent.core :as r]))
+  (:require [reagent.core :as r]
+            [jotis.viz.dashboard.config :as config]))
 
-(def ^:private api "http://localhost:3001")
+(def ^:private api config/api-base)
 
 ;; ---- Shared styles ----
 
@@ -462,7 +463,7 @@
             active?  (= @closing tid)
             cell     {:style {:padding "8px 10px"}}
             hint     (if (= (keyword (str (:trade/instrument-type t))) :stock)
-                       "price/share" "premium/contract")]
+                       "price/share" "credit + / debit −")]
         [:tr {:style {:border-bottom "1px solid #1e293b"}}
          [:td cell (fmt-date (:trade/opened-at t))]
          [:td {:style {:padding "8px 10px" :font-weight "600"}} (:trade/ticker t)]

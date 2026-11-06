@@ -126,22 +126,32 @@
            (double (or (:open-price leg) 0.0))])))
     trade-id))
 
+(defn trade-pnl
+  "P&L in dollars for a closed trade.
+   Options: open-value and close-value are signed net premiums per share, the same convention as
+   order entry: credit received (+), debit paid (-). P&L = (open + close) * qty * 100. Sell a
+   spread for +1.50 and buy it back for -0.40: P&L = +110.
+   Stock: open and close are prices per share; a short position gains when the price falls."
+  [{:keys [instrument-type side open-value close-value qty]}]
+  (if (= "stock" (name instrument-type))
+    (* (- (double close-value) (double open-value)) qty (if (= "short" (some-> side name)) -1.0 1.0))
+    (* (+ (double open-value) (double close-value)) qty 100.0)))
+
 (defn close-trade!
-  "Marks a trade closed, recording close-value and computing P&L.
-   For options: P&L = (open-value - close-value) * qty * 100
-   For stocks:  P&L = (close-value - open-value) * qty"
+  "Marks a trade closed, recording close-value and computing P&L (see trade-pnl for the sign
+   convention close-value must follow)."
   [trade-id close-value]
   (let [trade    (jdbc/execute-one! @ds
-                   ["SELECT open_value, qty, instrument_type
-                     FROM trader.trades WHERE id = ?"
+                   ["SELECT t.open_value, t.qty, t.instrument_type,
+                            (SELECT l.side FROM trader.legs l WHERE l.trade_id = t.id LIMIT 1) AS side
+                     FROM trader.trades t WHERE t.id = ?"
                     trade-id]
                    {:builder-fn rs/as-unqualified-maps})
-        open-val (double (:open_value trade))
-        qty      (:qty trade)
-        stock?   (= "stock" (:instrument_type trade))
-        pnl      (if stock?
-                   (* (- (double close-value) open-val) qty)
-                   (* (- open-val (double close-value)) qty 100))]
+        pnl      (trade-pnl {:instrument-type (:instrument_type trade)
+                             :side            (:side trade)
+                             :open-value      (:open_value trade)
+                             :close-value     close-value
+                             :qty             (:qty trade)})]
     (jdbc/execute-one! @ds
       ["UPDATE trader.trades
         SET status = 'closed', closed_at = NOW(), close_value = ?, pnl = ?

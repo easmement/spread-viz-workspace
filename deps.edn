@@ -27,7 +27,6 @@
  {:dev
   {:extra-paths ["components/math-engine/src"
                  "components/market-data/src"
-                 "components/trading-logic/src"
                  "components/account/src"
                  "components/order-manager/src"
                  "components/trade-store/src"
@@ -35,6 +34,11 @@
                  "bases/dashboard/src"]
    :extra-deps {com.bhauman/rebel-readline {:mvn/version "0.1.4"}
                 thheller/shadow-cljs {:mvn/version "2.28.20"}}}
+
+  :test
+  {:extra-paths ["components/math-engine/test"
+                 "components/trade-store/test"
+                 "bases/dashboard/test"]}
 
   :server
   {:extra-paths ["components/math-engine/src"
@@ -48,4 +52,4 @@
 
   :poly
   {:extra-deps {polylith/clj-poly {:mvn/version "0.2.20"}}
-   :main-opts ["-m" "polylith.clj.poly.main"]}}}
+   :main-opts ["-m" "polylith.clj.core.poly-cli.core"]}}}

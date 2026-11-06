@@ -4,14 +4,6 @@
             [jotis.viz.dashboard.views :as views]
             [jotis.viz.math-engine.interface :as math]))
 
-(defn- calculate-spread-pnl [legs spot t iv rate initial-cost]
-  (let [current-value (reduce (fn [acc {:keys [type strike side]}]
-                                (let [price (math/black-scholes type spot strike t iv rate)]
-                                  (if (= side :long) (+ acc price) (- acc price))))
-                              0.0
-                              legs)]
-    (+ current-value initial-cost)))
-
 (defn- price-range
   "Auto-sizes grid to ±2.5σ around spot, step scaled to price magnitude."
   [spot iv dte]
@@ -36,7 +28,7 @@
       spot
       iv
       (fn [p t]
-        (calculate-spread-pnl legs p t iv rate initial-cost)))))
+        (math/spread-pnl legs p t rate iv initial-cost)))))
 
 (defn- date->str [^js d]
   (str (.getFullYear d) "-"

@@ -11,19 +11,49 @@
             [jotis.viz.sim-pricer.interface :as sim]
             [cheshire.core :as json]))
 
-(def ^:private port 3001)
+;; ---- Configuration (environment variables, with safe defaults) ----
+
+(def ^:private host
+  "Interface to listen on. 127.0.0.1 keeps the API off the network: anyone who can reach it can
+   place orders, and it has no login."
+  (or (System/getenv "SPREAD_VIZ_HOST") "127.0.0.1"))
+
+(def ^:private port (Long/parseLong (or (System/getenv "SPREAD_VIZ_PORT") "3001")))
+
+(def allowed-origins
+  "Browser origins allowed to call the API (the dashboard's own dev server by default)."
+  (set (map str/trim (str/split (or (System/getenv "SPREAD_VIZ_ALLOWED_ORIGINS")
+                                    "http://localhost:8080,http://127.0.0.1:8080")
+                                #","))))
 
 (defn- ok [data]
   {:status  200
-   :headers {"Content-Type"                "application/json; charset=utf-8"
-             "Access-Control-Allow-Origin" "*"}
+   :headers {"Content-Type" "application/json; charset=utf-8"}
    :body    (json/generate-string data {:date-format "yyyy-MM-dd'T'HH:mm:ss'Z'"})})
 
 (defn- err [msg status]
   {:status  status
-   :headers {"Content-Type"                "application/json; charset=utf-8"
-             "Access-Control-Allow-Origin" "*"}
+   :headers {"Content-Type" "application/json; charset=utf-8"}
    :body    (json/generate-string {:error msg})})
+
+;; ---- Trade journal entries ----
+
+(defn- with-opening
+  "Adds what the journal needs to an order request: :open-value, the signed net premium per share
+   (credit +, debit -; price per share for stock), and :account-pct, the position's size as a
+   percentage of account equity. Market orders have no limit price: stock uses the current quote
+   as an estimate, options record 0 and say so in :notes."
+  [b instrument-type]
+  (let [stock?   (= instrument-type :stock)
+        limit    (some-> (:limit-price b) double)
+        open     (double (or limit (when stock? (market/get-spot-price (:ticker b))) 0.0))
+        qty      (long (or (:qty b) 1))
+        equity   (try (:equity (acct/get-account)) (catch Exception _ nil))
+        notional (* (Math/abs open) qty (if stock? 1 100))]
+    (assoc b
+           :open-value  open
+           :account-pct (if (and equity (pos? equity)) (* 100.0 (/ notional equity)) 0.0)
+           :notes       (or (:notes b) (when-not limit "Market order: open value is an estimate")))))
 
 (defmacro guarded [& body]
   `(try ~@body
@@ -65,7 +95,7 @@
       (let [b     (:body req)
             order (orders/place-stock-order b)
             id    (store/record-trade!
-                    (assoc b
+                    (assoc (with-opening b :stock)
                            :instrument-type :stock
                            :alpaca-order-id (:id order)
                            :legs [{:symbol      (:ticker b)
@@ -79,7 +109,7 @@
       (let [b     (:body req)
             order (orders/place-single-option b)
             id    (store/record-trade!
-                    (assoc b
+                    (assoc (with-opening b :single-option)
                            :instrument-type :single-option
                            :alpaca-order-id (:id order)
                            :legs [{:symbol      (orders/occ-symbol
@@ -100,7 +130,7 @@
             short-sym   (orders/occ-symbol (:ticker b) (:expiry b) opt-type (:short-strike b))
             long-sym    (orders/occ-symbol (:ticker b) (:expiry b) opt-type (:long-strike b))
             id          (store/record-trade!
-                          (assoc b
+                          (assoc (with-opening b :vertical-spread)
                                  :instrument-type :vertical-spread
                                  :option-type     opt-type
                                  :alpaca-order-id (:id order)
@@ -126,7 +156,7 @@
             near-sym (orders/occ-symbol (:ticker b) (:near-expiry b) opt-type (:strike b))
             far-sym  (orders/occ-symbol (:ticker b) (:far-expiry b)  opt-type (:strike b))
             id       (store/record-trade!
-                       (assoc b
+                       (assoc (with-opening b :calendar)
                               :instrument-type :calendar
                               :option-type     opt-type
                               :alpaca-order-id (:id order)
@@ -152,7 +182,7 @@
             near-sym (orders/occ-symbol (:ticker b) (:near-expiry b) opt-type (:near-strike b))
             far-sym  (orders/occ-symbol (:ticker b) (:far-expiry b)  opt-type (:far-strike b))
             id       (store/record-trade!
-                       (assoc b
+                       (assoc (with-opening b :diagonal)
                               :instrument-type :diagonal
                               :option-type     opt-type
                               :alpaca-order-id (:id order)
@@ -184,7 +214,7 @@
                         :expiry      (:expiry b)
                         :open-price  (or (:limit-price b) 0.0)})
             id       (store/record-trade!
-                       (assoc b
+                       (assoc (with-opening b :butterfly)
                               :instrument-type :butterfly
                               :option-type     opt-type
                               :alpaca-order-id (:id order)
@@ -208,7 +238,7 @@
                       :expiry      (:expiry b)
                       :open-price  (or (:limit-price b) 0.0)})
             id    (store/record-trade!
-                    (assoc b
+                    (assoc (with-opening b :iron-condor)
                            :instrument-type :iron-condor
                            :alpaca-order-id (:id order)
                            :legs [(mk-leg :put  (if short? :long  :short) (:put-buy-strike b))
@@ -232,7 +262,7 @@
                         :expiry      (:expiry b)
                         :open-price  (or (:limit-price b) 0.0)})
             id       (store/record-trade!
-                       (assoc b
+                       (assoc (with-opening b :back-ratio)
                               :instrument-type :back-ratio
                               :option-type     opt-type
                               :alpaca-order-id (:id order)
@@ -420,26 +450,58 @@
   trade-routes
   sim-routes)
 
-(defn- wrap-cors [handler]
+(defn- cors-headers [origin]
+  {"Access-Control-Allow-Origin"  origin
+   "Access-Control-Allow-Methods" "GET, POST, DELETE, OPTIONS"
+   "Access-Control-Allow-Headers" "Content-Type"
+   "Vary"                         "Origin"})
+
+(defn wrap-cors
+  "CORS for the dashboard's own origin(s) only. Other sites' pages can't read responses, and
+   can't send the JSON POST/DELETE requests that place and cancel orders: those need a preflight,
+   which is refused here."
+  [handler]
   (fn [req]
-    (if (= :options (:request-method req))
-      {:status  200
-       :headers {"Access-Control-Allow-Origin"  "*"
-                 "Access-Control-Allow-Methods" "GET, POST, DELETE, OPTIONS"
-                 "Access-Control-Allow-Headers" "Content-Type"
-                 "Access-Control-Max-Age"       "86400"}
-       :body    ""}
-      (let [resp (handler req)]
-        (update resp :headers assoc
-                "Access-Control-Allow-Origin"  "*"
-                "Access-Control-Allow-Methods" "GET, POST, DELETE, OPTIONS"
-                "Access-Control-Allow-Headers" "Content-Type")))))
+    (let [origin  (get-in req [:headers "origin"])
+          allowed (contains? allowed-origins origin)]
+      (if (= :options (:request-method req))
+        (if allowed
+          {:status 204 :headers (assoc (cors-headers origin) "Access-Control-Max-Age" "86400") :body ""}
+          {:status 403 :headers {} :body ""})
+        (cond-> (handler req)
+          allowed (update :headers merge (cors-headers origin)))))))
+
+(def ^:private local-hostnames #{"localhost" "127.0.0.1" "[::1]" "::1"})
+
+(defn- hostname [host-header]
+  (let [h (str/lower-case (or host-header ""))]
+    (cond
+      (str/starts-with? h "[") (subs h 0 (inc (max 0 (str/index-of h "]"))))
+      :else (first (str/split h #":")))))
+
+(defn wrap-localhost-only
+  "Defence against DNS rebinding: a page on evil.example can re-point its own domain at 127.0.0.1
+   and call this API as if it were same-origin, so CORS doesn't help. Browsers never let scripts
+   change Host, though, so reject any request whose Host isn't localhost, and any request from a
+   browser origin that isn't allowed."
+  [handler]
+  (fn [req]
+    (let [origin (get-in req [:headers "origin"])]
+      (cond
+        (not (contains? (conj local-hostnames host) (hostname (get-in req [:headers "host"]))))
+        (err "Requests must be addressed to localhost" 403)
+
+        (and origin (not= origin "null") (not (contains? allowed-origins origin)))
+        (err (str "Origin not allowed: " origin) 403)
+
+        :else (handler req)))))
 
 (def app
   (-> all-routes
       (wrap-json-body {:keywords? true})
       wrap-params
-      wrap-cors))
+      wrap-cors
+      wrap-localhost-only))
 
 (defonce ^:private server (atom nil))
 
@@ -447,8 +509,8 @@
   (store/init!)
   (sim/init!)
   (when @server (@server :timeout 100))
-  (reset! server (srv/run-server app {:port port}))
-  (println (str "API server on http://localhost:" port)))
+  (reset! server (srv/run-server app {:ip host :port port}))
+  (println (str "API server on http://" host ":" port)))
 
 (defn stop! []
   (when @server

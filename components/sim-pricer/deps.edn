@@ -1,2 +1,6 @@
 {:paths ["src"]
- :deps  {}}
+ :deps  {http-kit/http-kit                  {:mvn/version "2.8.0"}
+         cheshire/cheshire                  {:mvn/version "5.13.0"}
+         com.github.seancorfield/next.jdbc  {:mvn/version "1.3.939"}
+         org.postgresql/postgresql          {:mvn/version "42.7.4"}
+         com.zaxxer/HikariCP                {:mvn/version "5.1.0"}}}
